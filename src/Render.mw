@@ -1,0 +1,229 @@
+-- Laying a document out: the crate's `src/render.rs`, Wadler's algorithm
+-- with the crate's stack of commands. The port keeps that stack as the crate
+-- keeps it, entry for entry: where a line break continues and where an
+-- annotation ends both depend on it.
+--
+-- Copyright Jonathan Sterling, Darin Morrison, Markus Westerlind and the
+-- pretty.rs contributors, and the Meadow port's authors. Licensed under MIT:
+-- see LICENSE and COPYRIGHT.
+
+use Std.Collections.Vector as V
+use Std.String as S
+use pretty.Doc
+
+-- A piece of rendered output: text, or the start or end of an annotation.
+@pub data Chunk a = Write String | Push a | Pop
+
+data Mode = Break | Flat
+
+-- The renderer's state: the column, the stack of commands `(indentation,
+-- mode, document)` with the top first, the stack sizes at which annotations
+-- end with the last first, and the output so far.
+record State a = {
+  pos : Int,
+  width : Int,
+  stack : List (Int, Mode, Doc a),
+  size : Int,
+  levels : List Int,
+  levelCount : Int,
+  out : [Chunk a]
+}
+
+fun push ind mode d (s : State a) = { s | stack = (ind, mode, d) :: s.stack, size = s.size + 1 }
+
+-- Pushes the right-hand documents of `d`'s chain of appends, and gives the
+-- leftmost: the crate's `append_docs`.
+fun pushRights ind mode d (s : State a) =
+  match d with
+  | Doc.Append l r -> pushRights ind mode l (push ind mode r s)
+  | _ -> (d, s)
+
+-- The crate's `append_docs2`: the pieces of `r`, then of `l`, so that they
+-- come off the stack left to right.
+fun pushAppend ind mode l r (s : State a) =
+  match pushRights ind mode r s with
+  | (d, s1) -> pushRights ind mode l (push ind mode d s1)
+
+fun emit chunk (s : State a) = { s | out = V.pushBack s.out chunk }
+
+fun newline ind (s : State a) = { (emit (Chunk.Write ("\n" ++ S.repeat " " ind)) s) | pos = ind }
+
+-- The same pushes as `pushRights`, onto the list of documents `fitting` has
+-- still to measure.
+fun rightsOnto d pending =
+  match d with
+  | Doc.Append l r -> rightsOnto l (r :: pending)
+  | _ -> (d, pending)
+
+-- Whether `d` fits in the rest of the line from `pos`, flat, followed by the
+-- commands on the stack, broken: the crate's `fitting`.
+fun fitting d pos ind (s : State a) = fitDoc d Nil s.stack Mode.Flat pos ind s.width
+
+fun fitNext pending rest mode pos ind width =
+  match pending with
+  | Cons d more -> fitDoc d more rest mode pos ind width
+  | Nil ->
+      match rest with
+      | Cons (_, _, d) below -> fitDoc d Nil below Mode.Break pos ind width
+      | Nil -> True
+
+fun fitText len pending rest mode pos ind width =
+  let p = pos + len in
+  if p > width then False else fitNext pending rest mode p ind width
+
+fun fitDoc d pending rest mode pos ind width =
+  match d with
+  | Doc.Empty -> fitNext pending rest mode pos ind width
+  | Doc.Append l r ->
+      (match rightsOnto r pending with
+       | (last, p1) ->
+           match rightsOnto l (last :: p1) with
+           | (first, p2) -> fitDoc first p2 rest mode pos ind width)
+  | Doc.Hardline ->
+      (match mode with
+       | Mode.Break -> True
+       | Mode.Flat -> False)
+  | Doc.RenderLen len _ -> fitText len pending rest mode pos ind width
+  | Doc.Text t -> fitText (S.byteLength t) pending rest mode pos ind width
+  | Doc.FlatAlt broken flat ->
+      (match mode with
+       | Mode.Break -> fitDoc broken pending rest mode pos ind width
+       | Mode.Flat -> fitDoc flat pending rest mode pos ind width)
+  | Doc.Column f -> fitDoc (f pos) pending rest mode pos ind width
+  | Doc.Nesting f -> fitDoc (f ind) pending rest mode pos ind width
+  | Doc.Nest _ next -> fitDoc next pending rest mode pos ind width
+  | Doc.Group next -> fitDoc next pending rest mode pos ind width
+  | Doc.Annotated _ next -> fitDoc next pending rest mode pos ind width
+  | Doc.Union _ next -> fitDoc next pending rest mode pos ind width
+  | Doc.Fail -> False
+
+fun dropTop n xs = if n <= 0 then xs else
+  match xs with
+  | Cons _ rest -> dropTop (n - 1) rest
+  | Nil -> Nil
+
+-- Ends the annotations whose content is done: the crate's loop after each
+-- command.
+fun closeLevels (s : State a) =
+  match s.levels with
+  | Cons level rest if level == s.size ->
+      closeLevels (emit Chunk.Pop { s | levels = rest, levelCount = s.levelCount - 1 })
+  | _ -> s
+
+-- Runs commands until the stack is down to `top` entries: the crate's
+-- `best`. Gives whether all text fitted, or `None` if the document failed.
+fun bestFrom top fits (s : State a) =
+  if top >= s.size
+  then (Just fits, s)
+  else
+    match s.stack with
+    | Cons cmd rest ->
+        (match runCommand cmd fits { s | stack = rest, size = s.size - 1 } with
+         | (Just fits2, s2) -> bestFrom top fits2 (closeLevels s2)
+         | (None, s2) -> (None, s2))
+    | Nil -> (Just fits, s)
+
+fun wrote len t fits (s : State a) =
+  let s1 = { (emit (Chunk.Write t) s) | pos = s.pos + len } in
+  (Just (fits and s1.pos <= s1.width), s1)
+
+-- One command, and the documents it turns into in place.
+fun runCommand (ind, mode, d) fits (s : State a) =
+  match d with
+  | Doc.Empty -> (Just fits, s)
+  | Doc.Append l r ->
+      (match pushAppend ind mode l r s with
+       | (first, s1) -> runCommand (ind, mode, first) fits s1)
+  | Doc.FlatAlt broken flat ->
+      (match mode with
+       | Mode.Break -> runCommand (ind, mode, broken) fits s
+       | Mode.Flat -> runCommand (ind, mode, flat) fits s)
+  | Doc.Group inner ->
+      (match mode with
+       | Mode.Break if fitting inner s.pos ind s -> runCommand (ind, Mode.Flat, inner) fits s
+       | _ -> runCommand (ind, mode, inner) fits s)
+  | Doc.Nest offset inner -> runCommand (max 0 (ind + offset), mode, inner) fits s
+  | Doc.Hardline ->
+      (match s.stack with
+       | Cons (nextInd, nextMode, next) rest ->
+           runCommand (nextInd, nextMode, next) fits (newline nextInd { s | stack = rest, size = s.size - 1 })
+       | Nil -> (Just fits, newline ind s))
+  | Doc.RenderLen len t -> wrote len t fits s
+  | Doc.Text t -> wrote (S.byteLength t) t fits s
+  | Doc.Annotated ann inner ->
+      let s1 = emit (Chunk.Push ann) { s | levels = s.size :: s.levels, levelCount = s.levelCount + 1 } in
+      runCommand (ind, mode, inner) fits s1
+  | Doc.Union l r ->
+      let size = s.size in
+      let trial = push ind mode l { s | out = V.empty } in
+      (match bestFrom size True trial with
+       | (Just True, s1) -> (Just fits, { s1 | out = V.append s.out s1.out })
+       | (_, s1) ->
+           let kept = s1.levelCount - s.levelCount in
+           let back =
+             {
+               s1 |
+               pos = s.pos,
+               out = s.out,
+               stack = dropTop (s1.size - size) s1.stack,
+               size = min size s1.size,
+               levels = dropTop kept s1.levels,
+               levelCount = min s.levelCount s1.levelCount
+             }
+           in
+           runCommand (ind, mode, r) fits back)
+  | Doc.Column f -> runCommand (ind, mode, f s.pos) fits s
+  | Doc.Nesting f -> runCommand (ind, mode, f ind) fits s
+  | Doc.Fail -> (None, s)
+
+-- Adjacent text joined, and empty text dropped.
+fun merged chunks =
+  V.foldl
+    (\acc chunk ->
+      match chunk with
+      | Chunk.Write "" -> acc
+      | Chunk.Write t ->
+          (match V.get acc (V.len acc - 1) with
+           | Just (Chunk.Write before) -> V.set acc (V.len acc - 1) (Chunk.Write (before ++ t))
+           | _ -> V.pushBack acc chunk)
+      | _ -> V.pushBack acc chunk)
+    V.empty
+    chunks
+
+-- `d` laid out in `width` columns, as text and annotations, or `Err` if the
+-- document failed.
+@pub fun renderChunks width (d : Doc a) =
+  let start =
+    State {
+      pos = 0,
+      width = width,
+      stack = (0, Mode.Break, d) :: Nil,
+      size = 1,
+      levels = Nil,
+      levelCount = 0,
+      out = V.empty
+    }
+  in
+  match bestFrom 0 True start with
+  | (Just _, s) -> Ok (merged s.out)
+  | (None, _) -> Err "Document failed to render"
+
+-- `d` laid out in `width` columns, or `Err` if the document failed.
+@pub fun render width (d : Doc a) =
+  match renderChunks width d with
+  | Ok chunks ->
+      Ok
+        (S.concatAll
+          (V.map
+            (\c ->
+              match c with
+              | Chunk.Write t -> t
+              | _ -> "")
+            chunks))
+  | Err e -> Err e
+
+-- `d` laid out in `width` columns, and printed.
+@pub fun printDoc width (d : Doc a) =
+  match render width d with
+  | Ok text -> Ok (writeOutput text)
+  | Err e -> Err e

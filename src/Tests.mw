@@ -1,0 +1,236 @@
+-- The port against the crate: every document in `Cases.mw`, built by the
+-- same calls as the crate built it and rendered in the same widths, plus a
+-- few examples.
+--
+-- Every declaration carries `@cfg(test)`, as the tests are no part of the
+-- package.
+
+@cfg(test)
+use Std.Test (assertEq)
+@cfg(test)
+use Std.Collections.Vector as V
+@cfg(test)
+use pretty.Cases (cases)
+@cfg(test)
+use pretty.Doc
+@cfg(test)
+use pretty.Render
+@cfg(test)
+use pretty.Block
+
+-- --- reading ------------------------------------------------------------------------------
+
+@cfg(test)
+fun num i n =
+  let rec go k acc = if k >= n then acc else go (k + 1) (acc * 64 + (toInt (stringByteAt cases (i + k)) - 48)) in
+  (go 0 0, i + n)
+
+@cfg(test)
+fun signedNum i n =
+  match num i n with
+  | (v, next) -> (v - bit (6 * n - 1), next)
+
+@cfg(test)
+fun str i =
+  let len = fst (num i 3) in
+  (stringSlice cases (i + 3) (i + 3 + len), i + 3 + len)
+
+@cfg(test)
+fun flag i =
+  match num i 1 with
+  | (n, next) -> (n == 1, next)
+
+-- Runs `f` `n` times from `i`, threading `acc` through.
+@cfg(test)
+fun times n i acc f =
+  let rec go k at a =
+    if k >= n
+    then (a, at)
+    else
+      match f at a with
+      | (a2, next) -> go (k + 1) next a2
+  in
+  go 0 i acc
+
+-- The generator's column, nesting and width functions.
+@cfg(test)
+fun apply kind k d x =
+  match kind with
+  | 0 -> append d (asString x)
+  | 1 -> if x > k then hardline else d
+  | 2 -> nest (k - x) d
+  | _ -> if x % 2 == 0 then d else group d
+
+@cfg(test)
+def leaves = [nil, nil, hardline, space, line, line_, softline, softline_, fail]
+
+@cfg(test)
+fun readDocs n i =
+  times n i V.empty (\at acc ->
+    let d = readDoc at in
+    (V.pushBack acc (fst d), snd d))
+
+@cfg(test)
+fun readTwo i f =
+  let a = readDoc i in
+  let b = readDoc (snd a) in
+  (f (fst a) (fst b), snd b)
+
+@cfg(test)
+fun readAffixes i =
+  let prefix = readDoc i in
+  let suffix = readDoc (snd prefix) in
+  let isNested = flag (snd suffix) in
+  let a = affixes (fst prefix) (fst suffix) in
+  (if fst isNested then nested a else a, snd isNested)
+
+-- One document, as the tree of calls that builds it.
+@cfg(test)
+fun readDoc i =
+  let tag = num i 1 in
+  let at = snd tag in
+  match fst tag with
+  | 1 -> mapFst text (str at)
+  | 9 -> readTwo at append
+  | 10 -> mapFst group (readDoc at)
+  | 11 ->
+      let k = signedNum at 2 in
+      mapFst (nest (fst k)) (readDoc (snd k))
+  | 12 -> readTwo at flatAlt
+  | 13 ->
+      let n = num at 1 in
+      mapFst (annotate (fst n)) (readDoc (snd n))
+  | 14 -> readTwo at union
+  | 15 -> mapFst align (readDoc at)
+  | 16 ->
+      let k = signedNum at 2 in
+      mapFst (hang (fst k)) (readDoc (snd k))
+  | 17 ->
+      let k = num at 2 in
+      mapFst (indent (fst k)) (readDoc (snd k))
+  | 18 ->
+      let kind = num at 1 in
+      let k = signedNum (snd kind) 2 in
+      readTwo (snd k) (\a b -> widthOf (\w -> apply (fst kind) (fst k) b w) a)
+  | 19 ->
+      let which = num at 1 in
+      let wrap = V.getOr brackets [singleQuotes, doubleQuotes, parens, angles, braces, brackets] (fst which) in
+      mapFst wrap (readDoc (snd which))
+  | 20 ->
+      let d = readDoc at in
+      readTwo (snd d) (\before after -> enclose before after (fst d))
+  | 21 ->
+      let n = num at 1 in
+      mapFst concat (readDocs (fst n) (snd n))
+  | 22 ->
+      let n = num at 1 in
+      let docs = readDocs (fst n) (snd n) in
+      mapFst (intersperse (fst docs)) (readDoc (snd docs))
+  | 23 -> mapFst reflow (str at)
+  | 24 ->
+      let kind = num at 1 in
+      let k = signedNum (snd kind) 2 in
+      mapFst (\d -> column (\c -> apply (fst kind) (fst k) d c)) (readDoc (snd k))
+  | 25 ->
+      let kind = num at 1 in
+      let k = signedNum (snd kind) 2 in
+      mapFst (\d -> nesting (\n -> apply (fst kind) (fst k) d n)) (readDoc (snd k))
+  | 26 -> mapFst asString (signedNum at 2)
+  | 27 -> mapFst Doc.Text (str at)
+  | 28 ->
+      let indentBy = signedNum at 1 in
+      let count = num (snd indentBy) 1 in
+      let parts =
+        times (fst count) (snd count) V.empty (\p acc ->
+          let a = readAffixes p in
+          (V.pushBack acc (fst a), snd a))
+      in
+      mapFst (\body -> format (fst indentBy) (block (fst parts) body)) (readDoc (snd parts))
+  | 29 ->
+      let n = num at 2 in
+      let kind = num (snd n) 1 in
+      let k = signedNum (snd kind) 2 in
+      readTwo (snd k) (\d e -> nest (fst n) (group (append (nesting (\x -> apply (fst kind) (fst k) d x)) e)))
+  | k -> (V.getOr nil leaves k, at)
+
+@cfg(test)
+fun readChunk i =
+  match num i 1 with
+  | (0, at) -> mapFst Chunk.Write (str at)
+  | (1, at) -> mapFst Chunk.Push (num at 1)
+  | (_, at) -> (Chunk.Pop, at)
+
+-- --- checking -----------------------------------------------------------------------------
+
+-- One rendering: the width, and what the crate and the port make of it.
+@cfg(test)
+fun runWidth d i =
+  let w = num i 2 in
+  let ok = flag (snd w) in
+  let want =
+    if fst ok
+    then
+      let n = num (snd ok) 2 in
+      mapFst Ok (times (fst n) (snd n) V.empty (\at acc ->
+        let c = readChunk at in
+        (V.pushBack acc (fst c), snd c)))
+    else (Err "Document failed to render", snd ok)
+  in
+  ((fst w, fst want), (fst w, renderChunks (fst w) d), snd want)
+
+@cfg(test)
+fun runCase i =
+  let d = readDoc i in
+  times 3 (snd d) ([], []) (\at (wants, gots) ->
+    match runWidth (fst d) at with
+    | (want, got, next) -> ((V.pushBack wants want, V.pushBack gots got), next))
+
+@cfg(test)
+fun check i n bad =
+  if i >= stringByteLength cases
+  then (n, bad)
+  else
+    match runCase i with
+    | ((want, got), next) -> check next (n + 1) (if want == got then bad else V.pushBack bad (n, want, got))
+
+-- The number of documents, and the first few the port renders differently.
+@cfg(test)
+@test fun resultsMatchTheCrate () =
+  match check 0 0 V.empty with
+  | (n, bad) -> assertEq (n, V.take bad 2) (2000, []) "documents the port and pretty render differently"
+
+-- --- examples -----------------------------------------------------------------------------
+
+@cfg(test)
+def list = group (append (text "[") (append (nest 2 (append line (text "1, 2, 3"))) (append line (text "]"))))
+
+@cfg(test)
+@test fun examples () =
+  let a = assertEq (render 80 list) (Ok "[ 1, 2, 3 ]") "fits" in
+  let b = assertEq (render 8 list) (Ok "[\n  1, 2, 3\n]") "broken" in
+  assertEq (render 80 (append (text "a") fail)) (Err "Document failed to render") "fails"
+
+@cfg(test)
+data Sexp = Atom String | List [Sexp]
+
+@cfg(test)
+fun sexp s =
+  match s with
+  | Sexp.Atom a -> text a
+  | Sexp.List xs -> append (text "(") (append (group (nest 1 (intersperse (V.map sexp xs) line))) (text ")"))
+
+-- The README's example, as the crate renders it.
+@cfg(test)
+@test fun readmeExample () =
+  let square =
+    Sexp.List
+      [ Sexp.Atom "define",
+        Sexp.List [Sexp.Atom "square", Sexp.Atom "x"],
+        Sexp.List [Sexp.Atom "*", Sexp.Atom "x", Sexp.Atom "x"] ]
+  in
+  assertEq
+    (V.map (\w -> render w (sexp square)) [40, 20, 10])
+    [ Ok "(define (square x) (* x x))",
+      Ok "(define\n (square x)\n (* x x))",
+      Ok "(define\n (square\n  x)\n (* x x))" ]
+    "an s-expression in three widths"

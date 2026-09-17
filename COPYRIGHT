@@ -1,0 +1,7 @@
+pretty (the Meadow package) is a port of the Rust crate pretty
+(https://github.com/Marwes/pretty.rs), version 0.12.5, by Jonathan Sterling,
+Darin Morrison, Markus Westerlind and contributors, to Meadow. Its test cases
+are generated from that crate, and its code is translated from its source.
+
+pretty is licensed under the MIT license, and so is this port: see LICENSE
+(pretty's).

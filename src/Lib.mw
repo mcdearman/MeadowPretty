@@ -1,0 +1,26 @@
+-- pretty: Wadler-style pretty printing. Build a document from text, line
+-- breaks, groups and nesting, and lay it out in a width: each group goes on
+-- one line if it fits, and is broken where it does not. A port of Rust's
+-- `pretty` crate, version 0.12.5.
+--
+--   use pretty (text, line, group, nest, append, concat, render)
+--
+--   def list =
+--     group (append (text "[") (append (nest 2 (append line (text "1, 2, 3"))) (append line (text "]"))))
+--
+--   render 80 list   -- Ok "[ 1, 2, 3 ]"
+--   render 8 list    -- Ok "[\n  1, 2, 3\n]"
+
+mod Doc
+mod Render
+mod Block
+@cfg(test)
+mod Cases
+@cfg(test)
+mod Tests
+
+@pub use pretty.Doc
+@pub use pretty.Doc.Doc
+@pub use pretty.Render (Chunk, render, renderChunks, printDoc)
+@pub use pretty.Render.Chunk.*
+@pub use pretty.Block

@@ -1,0 +1,68 @@
+-- Blocks: a body with layers of prefixes and suffixes, laid out with as many
+-- layers as fit on the first line. The crate's `src/block.rs`.
+--
+-- Copyright Jonathan Sterling, Darin Morrison, Markus Westerlind and the
+-- pretty.rs contributors, and the Meadow port's authors. Licensed under MIT:
+-- see LICENSE and COPYRIGHT.
+
+use Std.Collections.Vector as V
+use pretty.Doc
+
+-- A prefix and a suffix around a block's body, and whether what they
+-- enclose is nested.
+@pub record Affixes a = { prefix : Doc a, suffix : Doc a, nest : Bool }
+
+@pub fun affixes prefix suffix = Affixes { prefix = prefix, suffix = suffix, nest = False }
+
+-- The affixes, with what they enclose nested.
+@pub fun nested (x : Affixes a) = { x | nest = True }
+
+-- A body and the affixes around it, outermost first.
+@pub record BlockDoc a = { affixes : [Affixes a], body : Doc a }
+
+@pub fun block affixes body = BlockDoc { affixes = affixes, body = body }
+
+fun prefixes xs = concat (V.map (\(x : Affixes a) -> x.prefix) xs)
+
+fun suffixes xs = concat (V.map (\(x : Affixes a) -> x.suffix) xs)
+
+fun isNil d =
+  match d with
+  | Doc.Empty -> True
+  | _ -> False
+
+-- The block, with nested parts indented `indent`: for each number of
+-- affixes that could share the first line, most first, a layout, each tried
+-- in turn.
+@pub fun format indent (b : BlockDoc a) =
+  let failOnMultiLine = flatAlt fail nil in
+  let count = V.len b.affixes in
+  let layout =
+    \split ->
+      let before = V.take b.affixes split in
+      let after = V.drop b.affixes split in
+      let last = V.len before == 1 in
+      let first = group (append (prefixes before) (if last then nil else failOnMultiLine)) in
+      let bare = not last and V.all (\(x : Affixes a) -> isNil x.prefix) before in
+      let body = append (nest indent (append b.body (if bare then failOnMultiLine else nil))) (suffixes after) in
+      let wrapped =
+        V.foldl
+          (\acc (x : Affixes a) ->
+            let d = append x.prefix acc in
+            group (if x.nest then nest indent d else d))
+          body
+          (V.reverse after)
+      in
+      append first (group (append wrapped (suffixes before)))
+  in
+  V.foldl
+    (\acc split ->
+      match acc with
+      | Just d -> Just (union d (layout split))
+      | None -> Just (layout split))
+    None
+    (V.reverse (V.range 1 (count + 1)))
+    |> (\m ->
+      match m with
+      | Just d -> d
+      | None -> b.body)

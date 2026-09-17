@@ -1,0 +1,197 @@
+-- Documents and the functions that build them: the crate's `Doc` and the
+-- methods of its `DocAllocator` and `DocBuilder`.
+--
+-- Copyright Jonathan Sterling, Darin Morrison, Markus Westerlind and the
+-- pretty.rs contributors, and the Meadow port's authors. Licensed under MIT:
+-- see LICENSE and COPYRIGHT.
+
+use Std.Collections.Vector as V
+use Std.String as S
+use Std.Char as C
+use unicodeWidth (width)
+
+-- A document, annotated with values of type `a`.
+--
+-- `Text` is measured in bytes, as the crate measures its text variants when
+-- they are made by hand. `text` makes a `RenderLen` of text that is not all
+-- ASCII, measured in terminal columns. The crate calls `Empty` `Nil`, a name
+-- Meadow's lists already use.
+@pub data Doc a =
+  | Empty
+  | Append (Doc a) (Doc a)
+  | Group (Doc a)
+  | FlatAlt (Doc a) (Doc a)
+  | Nest Int (Doc a)
+  | Hardline
+  | RenderLen Int String
+  | Text String
+  | Annotated a (Doc a)
+  | Union (Doc a) (Doc a)
+  | Column (Int -> Doc a)
+  | Nesting (Int -> Doc a)
+  | Fail
+
+-- The empty document.
+@pub def nil = Doc.Empty
+
+-- A document that cannot be laid out: rendering fails, unless a `union`
+-- has another choice.
+@pub def fail = Doc.Fail
+
+-- A line break, whether or not its group fits on one line.
+@pub def hardline = Doc.Hardline
+
+@pub def space = Doc.Text " "
+
+fun isAscii s =
+  let bytes = stringToBytes s in
+  let n = arrayLen bytes in
+  let rec go i = if i >= n then True else if toInt (arrayGet bytes i) < 128 then go (i + 1) else False in
+  go 0
+
+-- `s` as a document: empty text is `nil`, and text that is not all ASCII is
+-- measured in the columns it takes.
+@pub fun text s =
+  if S.isEmpty s
+  then Doc.Empty
+  else if isAscii s
+  then Doc.Text s
+  else Doc.RenderLen (width s) s
+
+-- A value as text: the crate's `as_string`.
+@pub fun asString x = text "${x}"
+
+-- `a` followed by `b`. Appending `nil` leaves the other document as it is.
+@pub fun append (a : Doc x) (b : Doc x) =
+  match (a, b) with
+  | (Doc.Empty, _) -> b
+  | (_, Doc.Empty) -> a
+  | _ -> Doc.Append a b
+
+-- `broken` where the enclosing group is broken across lines, and `flat` where
+-- it fits on one.
+@pub fun flatAlt broken flat = Doc.FlatAlt broken flat
+
+-- A line break, or a space where the group fits on one line.
+@pub def line = flatAlt hardline space
+
+-- A line break, or nothing where the group fits on one line.
+@pub def line_ = flatAlt hardline nil
+
+-- `d`, laid out on one line if it fits, and broken otherwise. Text, `nil`
+-- and groups are left as they are.
+@pub fun group (d : Doc x) =
+  match d with
+  | Doc.Group _ -> d
+  | Doc.Text _ -> d
+  | Doc.Empty -> d
+  | _ -> Doc.Group d
+
+-- A space, or a line break where it does not fit.
+@pub def softline = group line
+
+-- Nothing, or a line break where it does not fit.
+@pub def softline_ = group line_
+
+-- `d`, with lines after its breaks indented `offset` further.
+@pub fun nest offset (d : Doc x) =
+  match d with
+  | Doc.Empty -> d
+  | _ -> if offset == 0 then d else Doc.Nest offset d
+
+@pub fun annotate ann d = Doc.Annotated ann d
+
+-- `a` if it can be laid out, and `b` otherwise. Laying out `a` is tried
+-- first, to the end of the document.
+@pub fun union a b = Doc.Union a b
+
+-- The document `f` makes of the column it starts at.
+@pub fun column f = Doc.Column f
+
+-- The document `f` makes of the current indentation.
+@pub fun nesting f = Doc.Nesting f
+
+-- The documents, one after another.
+@pub fun concat docs = V.foldl append nil docs
+
+-- The documents, with `sep` between each two.
+@pub fun intersperse docs sep =
+  match V.get docs 0 with
+  | Just first -> V.foldl (\acc d -> append (append acc sep) d) first (V.drop docs 1)
+  | None -> nil
+
+-- Unicode's `White_Space` property, as Rust's `char::is_whitespace` has it.
+fun isWhitespace c =
+  let n = C.code c in
+  (n >= 9 and n <= 13)
+    or n == 32
+    or n == 133
+    or n == 160
+    or n == 5760
+    or (n >= 8192 and n <= 8202)
+    or n == 8232
+    or n == 8233
+    or n == 8239
+    or n == 8287
+    or n == 12288
+
+-- `s` split at each whitespace character, as Rust's
+-- `str::split(char::is_whitespace)`: runs of whitespace leave empty pieces.
+fun splitWhitespace s =
+  let cs = stringToChars s in
+  let n = arrayLen cs in
+  let rec go i start acc =
+    if i >= n
+    then V.pushBack acc (charsToString (arraySlice cs start n))
+    else if isWhitespace (arrayGet cs i)
+    then go (i + 1) (i + 1) (V.pushBack acc (charsToString (arraySlice cs start i)))
+    else go (i + 1) start acc
+  in
+  go 0 0 V.empty
+
+-- The words of `s`, with a `softline` between each two, so that they fill
+-- lines.
+@pub fun reflow s = intersperse (V.map text (splitWhitespace s)) softline
+
+-- `d`, with its lines indented to the column it starts at.
+@pub fun align (d : Doc x) = column (\col -> nesting (\current -> nest (col - current) d))
+
+-- `d`, with its lines after the first indented `adjust` past the column it
+-- starts at.
+@pub fun hang adjust (d : Doc x) = align (nest adjust d)
+
+-- `adjust` spaces, as the crate writes them: text of at most 100 at a time.
+fun spaces adjust =
+  let rec go remaining acc =
+    if remaining <= 0 then acc else
+      let n = min 100 remaining in
+      go (remaining - n) (append acc (text (S.repeat " " n)))
+  in
+  go adjust nil
+
+-- `d`, indented `adjust` spaces, the first line included.
+@pub fun indent adjust (d : Doc x) = hang adjust (append (spaces adjust) d)
+
+-- `d` followed by `f` of the columns `d` took.
+@pub fun widthOf f (d : Doc x) = column (\start -> append d (column (\stop -> f (stop - start))))
+
+-- `d` between `before` and `after`.
+@pub fun enclose before after (d : Doc x) = append (append before d) after
+
+@pub fun singleQuotes d = enclose (text "'") (text "'") d
+
+@pub fun doubleQuotes d = enclose (text "\"") (text "\"") d
+
+@pub fun parens d = enclose (text "(") (text ")") d
+
+@pub fun angles d = enclose (text "<") (text ">") d
+
+@pub fun braces d = enclose (text "{") (text "}") d
+
+@pub fun brackets d = enclose (text "[") (text "]") d
+
+-- `Just` a document, or `nil`: the crate's `Pretty` for `Option`.
+@pub fun optional m =
+  match m with
+  | Just d -> d
+  | None -> nil
