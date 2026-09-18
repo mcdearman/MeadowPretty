@@ -5,6 +5,7 @@ version = 1
 
 [[package]]
 name = "unicodeWidth"
-source = "git+https://github.com/mcdearman/meadow-unicode-width"
+source = "git+https://github.com/mcdearman/meadow-unicode-width?version=0.1.0"
+version = "0.1.0"
 rev = "fa95092300d547891f5e1ecbd100b7e2438e1058"
 tree = "2373973eebaa44035b6dcf028675e40a6b69ebfb"
