@@ -3,4 +3,4 @@ name = "pretty"
 version = "0.1.0"
 
 [dependencies]
-unicodeWidth = { path = "../meadow-unicode-width" }
+unicodeWidth = { git = "https://github.com/mcdearman/meadow-unicode-width" }
