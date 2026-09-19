@@ -10,13 +10,13 @@ use Std.Test (assertEq)
 @cfg(test)
 use Std.Collections.Vector as V
 @cfg(test)
-use pretty.Cases (cases)
+use Pretty.Cases (cases)
 @cfg(test)
-use pretty.Doc
+use Pretty.Doc
 @cfg(test)
-use pretty.Render
+use Pretty.Render
 @cfg(test)
-use pretty.Block
+use Pretty.Block
 
 -- --- reading ------------------------------------------------------------------------------
 

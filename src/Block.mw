@@ -6,7 +6,7 @@
 -- see LICENSE and COPYRIGHT.
 
 use Std.Collections.Vector as V
-use pretty.Doc
+use Pretty.Doc
 
 -- A prefix and a suffix around a block's body, and whether what they
 -- enclose is nested.

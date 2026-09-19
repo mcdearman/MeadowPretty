@@ -8,7 +8,7 @@
 use Std.Collections.Vector as V
 use Std.String as S
 use Std.Char as C
-use unicodeWidth (width)
+use UnicodeWidth (width)
 
 -- A document, annotated with values of type `a`.
 --
@@ -190,7 +190,7 @@ fun spaces adjust =
 
 @pub fun brackets d = enclose (text "[") (text "]") d
 
--- `Just` a document, or `nil`: the crate's `Pretty` for `Option`.
+-- `Just` a document, or `nil`: the crate's `pretty` for `Option`.
 @pub fun optional m =
   match m with
   | Just d -> d

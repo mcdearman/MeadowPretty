@@ -3,7 +3,7 @@
 -- one line if it fits, and is broken where it does not. A port of Rust's
 -- `pretty` crate, version 0.12.5.
 --
---   use pretty (text, line, group, nest, append, concat, render)
+--   use Pretty (text, line, group, nest, append, concat, render)
 --
 --   def list =
 --     group (append (text "[") (append (nest 2 (append line (text "1, 2, 3"))) (append line (text "]"))))
@@ -19,8 +19,8 @@ mod Cases
 @cfg(test)
 mod Tests
 
-@pub use pretty.Doc
-@pub use pretty.Doc.Doc
-@pub use pretty.Render (Chunk, render, renderChunks, printDoc)
-@pub use pretty.Render.Chunk.*
-@pub use pretty.Block
+@pub use Pretty.Doc
+@pub use Pretty.Doc.Doc
+@pub use Pretty.Render (Chunk, render, renderChunks, printDoc)
+@pub use Pretty.Render.Chunk.*
+@pub use Pretty.Block

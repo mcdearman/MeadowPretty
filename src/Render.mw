@@ -9,7 +9,7 @@
 
 use Std.Collections.Vector as V
 use Std.String as S
-use pretty.Doc
+use Pretty.Doc
 
 -- A piece of rendered output: text, or the start or end of an annotation.
 @pub data Chunk a = Write String | Push a | Pop
