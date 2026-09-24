@@ -8,13 +8,13 @@ broken if it does not.
 This package is a port of Rust's [`pretty`](https://github.com/Marwes/pretty.rs)
 0.12.5. It renders documents exactly as the crate does, annotations included.
 Text that is not ASCII is measured with
-[unicodeWidth](https://github.com/mcdearman/MeadowUnicodeWidth), the port of
+[unicodeWidth](https://github.com/mcdearman/UnicodeWidth), the port of
 the `unicode-width` version the crate uses.
 
 ## Install
 
 ```sh
-meadow add mcdearman/MeadowPretty
+meadow add mcdearman/Pretty
 ```
 
 ## Use
