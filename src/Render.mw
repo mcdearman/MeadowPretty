@@ -12,6 +12,7 @@ use Std.String as S
 use Pretty.Doc
 
 -- A piece of rendered output: text, or the start or end of an annotation.
+@derive(PartialEq)
 @pub data Chunk a = Write String | Push a | Pop
 
 data Mode = Break | Flat
